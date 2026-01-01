@@ -135,7 +135,7 @@ contract StakingVaultManager is Base, IStakingVaultManager {
         require(vHYPEtoHYPE(vhypeAmount) >= minimumWithdrawAmount, BelowMinimumWithdrawAmount());
 
         // This contract escrows the vHYPE until the withdraw is processed
-        bool success = vHYPE.transferFrom(msg.sender, address(this), vhypeAmount);
+        bool success = vHYPE.transferFrom(msg.sender, address(this), vhypeAmount); // @save Reentrency attack
         require(success, TransferFailed(msg.sender, vhypeAmount));
 
         uint256[] memory withdrawAmounts = _splitWithdraws(vhypeAmount);
@@ -157,7 +157,7 @@ contract StakingVaultManager is Base, IStakingVaultManager {
             accountWithdrawIds[msg.sender].push(withdrawId);
 
             // Add to the end of the linked list
-            withdrawQueue.pushBack(withdrawId);
+            withdrawQueue.pushBack(withdrawId); // @save Unchecked return value
 
             // Increment the withdraw ID counter
             nextWithdrawId++;
@@ -256,14 +256,14 @@ contract StakingVaultManager is Base, IStakingVaultManager {
         require(withdraw.batchIndex == type(uint256).max, WithdrawProcessed()); // Can only cancel unprocessed withdraws
 
         // Remove from the linked list
-        withdrawQueue.remove(withdrawId);
+        withdrawQueue.remove(withdrawId); // @save Unchecked return value
 
         // Set cancelled timestamp
         withdraw.cancelledAt = block.timestamp;
 
         // Refund vHYPE
         uint256 vhypeAmount = withdraw.vhypeAmount;
-        bool success = vHYPE.transfer(msg.sender, vhypeAmount);
+        bool success = vHYPE.transfer(msg.sender, vhypeAmount); // @save Unsafe variant of ERC20 call
         require(success, TransferFailed(msg.sender, vhypeAmount));
 
         emit CancelWithdraw(msg.sender, withdrawId, withdraw);
@@ -375,7 +375,7 @@ contract StakingVaultManager is Base, IStakingVaultManager {
     /// @inheritdoc IStakingVaultManager
     function finalizeBatch() external whenNotPaused whenBatchProcessingNotPaused {
         // Call processBatch to ensure that we've processed all available withdraws in the batch
-        processBatch(type(uint256).max);
+        processBatch(type(uint256).max); // @save Unchecked return value
 
         Batch memory batch = batches[currentBatchIndex];
 
@@ -393,7 +393,7 @@ contract StakingVaultManager is Base, IStakingVaultManager {
         lastFinalizedBatchTime = block.timestamp;
 
         // Burn the escrowed vHYPE (burn from this contract's balance)
-        vHYPE.burn(batch.vhypeProcessed);
+        vHYPE.burn(batch.vhypeProcessed); // @save Possible reentrancy
 
         L1ReadLibrary.DelegatorSummary memory delegatorSummary = stakingVault.delegatorSummary();
         L1ReadLibrary.SpotBalance memory spotBalance = stakingVault.spotBalance(stakingVault.HYPE_TOKEN_ID());
@@ -405,7 +405,7 @@ contract StakingVaultManager is Base, IStakingVaultManager {
 
         // Always transfer the full deposit amount to HyperCore spot
         if (depositsInBatch > 0) {
-            stakingVault.transferHypeToCore(depositsInBatch);
+            stakingVault.transferHypeToCore(depositsInBatch); // @save Possible reentrancy
         }
 
         // Net out the deposits and withdraws
@@ -417,12 +417,12 @@ contract StakingVaultManager is Base, IStakingVaultManager {
             // pending withdrawals, we can't re-stake it. Once it lands in spot,
             // the next finalizeBatch will stake it.
             uint256 amountToStake = Math.min(totalExcess, expectedSpotBalance);
-            stakingVault.stake(validator, amountToStake.to8Decimals());
+            stakingVault.stake(validator, amountToStake.to8Decimals()); // @save Possible reentrancy
         } else if (expectedAvailableForWithdraws < neededForWithdraws) {
             // If we don't have enough HYPE to cover all expected withdraws, we need to
             // withdraw some HYPE from the staking vault
             uint256 amountToUnstake = neededForWithdraws - expectedAvailableForWithdraws;
-            stakingVault.unstake(validator, amountToUnstake.to8Decimals());
+            stakingVault.unstake(validator, amountToUnstake.to8Decimals()); // @save Possible reentrancy
         }
 
         emit FinalizeBatch(currentBatchIndex, batches[currentBatchIndex]);
@@ -610,7 +610,7 @@ contract StakingVaultManager is Base, IStakingVaultManager {
     function switchValidator(address newValidator) external onlyOwner {
         L1ReadLibrary.DelegatorSummary memory delegatorSummary = stakingVault.delegatorSummary();
         if (delegatorSummary.delegated > 0) {
-            stakingVault.tokenRedelegate(validator, newValidator, delegatorSummary.delegated);
+            stakingVault.tokenRedelegate(validator, newValidator, delegatorSummary.delegated); // @save Possible reentrancy
         }
 
         validator = newValidator;
@@ -757,7 +757,7 @@ contract StakingVaultManager is Base, IStakingVaultManager {
         // contract is paused and only owner functions are available. In the worst case, we don't have
         // enough HYPE in HyperCore Spot to perform a staking deposit, and these two CoreWriter calls
         // will just fail silently, and no HYPE will be lost.
-        stakingVault.stake(validator, amount.to8Decimals());
+        stakingVault.stake(validator, amount.to8Decimals()); // @save Possible reentrancy
         emit EmergencyStakingDeposit(msg.sender, amount, purpose);
     }
 
@@ -772,7 +772,7 @@ contract StakingVaultManager is Base, IStakingVaultManager {
     }
 
     function _canDeposit() internal view {
-        require(msg.value >= minimumDepositAmount, BelowMinimumDepositAmount());
+        require(msg.value >= minimumDepositAmount, BelowMinimumDepositAmount()); // @save never called by payable func
     }
 
     modifier whenBatchProcessingNotPaused() {
